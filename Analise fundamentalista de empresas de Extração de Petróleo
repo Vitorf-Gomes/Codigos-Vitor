@@ -1,0 +1,139 @@
+import pandas as pd
+from datetime import date, timedelta
+import numpy as np
+import matplotlib.pyplot as plt
+import yahoo_fin.stock_info as yf
+import yfinance as yfi
+i=0
+lista_de_empresas = ['PETR3','CSAN3','ENAT3','PRIO3','VBBR3','UGPA3', 'OPCT3']
+for empresa in lista_de_empresas:
+    lista_de_empresas[i] = empresa+'.SA'
+    i= i+1
+print(lista_de_empresas)
+
+balance_sheet = []
+income_statement = []
+cash_flow_state = []
+years = []
+pontuacao_lucratividade = 0
+pontuacao_alavancagem = 0
+pontuacao_eficiencia_operacional = 0
+razao_pl = 0
+pontuacao_total = 0
+summary = pd.DataFrame(columns=['Empresa', 'Razao P/L', 'Lucratividade', 'Alavancagem', 'Eficiencia Operacional'])
+
+def get_data(empresa):
+    global balance_sheet
+    global income_statement
+    global cash_flow_state
+    global years
+    balance_sheet = yf.get_balance_sheet(empresa)
+    years = balance_sheet.columns
+    cash_flow_state = yf.get_cash_flow(empresa)   
+    income_statement = yf.get_income_statement(empresa)
+
+
+def lucratividade():
+    global pontuacao_lucratividade
+    #criterios para resultado liquido positivo e resultado liquido maior que ano anterior
+    # 2 -> ano de 2019
+    # 3 -> ano de 2018
+    resultado_liquido = income_statement[years[2]]['netIncome']
+    resultado_liquido_aa = income_statement[years[3]]['netIncome']
+    rl_pontuacao = 1 if resultado_liquido > 0 else 0 
+    rl_pontuacao_2 = 1 if resultado_liquido > resultado_liquido_aa else 0
+
+    #criterio fluxo de caixa operacional
+    fc_op = cash_flow_state[years[2]]['totalCashFromOperatingActivities']
+    fc_op_pontuacao = 1 if fc_op > 0 else 0
+
+    #mudanca de Retorno sob ativos
+    ativos_totais = balance_sheet[years[2]]['totalAssets']
+    ativos_totais_aa = balance_sheet[years[3]]['totalAssets']
+    RoA = resultado_liquido / ativos_totais
+    RoA_aa = resultado_liquido_aa / ativos_totais_aa
+    RoA_pontuacao = 1 if RoA > RoA_aa else 0
+
+    #retornos
+    retornos = fc_op / ativos_totais - RoA
+    ret_pontuacao = 1 if retornos > 0 else 0
+
+    #pontuacao da lucratividade 
+    pontuacao_lucratividade = rl_pontuacao + rl_pontuacao_2 + fc_op_pontuacao + RoA_pontuacao + ret_pontuacao
+    
+
+def leverage():
+    global pontuacao_alavancagem
+    # razao dividas de longo prazo 
+    try:
+        lp_dividas = balance_sheet[years[2]]['longTermDebt']
+        ativos_totais = balance_sheet[years[2]]['totalAssets']
+        razao_dividas = lp_dividas / ativos_totais
+        lp_dividas_pontuacao = 1 if razao_dividas < 0.4 else 0
+    except:
+        lp_dividas_pontuacao = 1
+        
+    #razao compromissos a curto prazo
+    ativos_cp = balance_sheet[years[2]]['totalCurrentAssets']
+    compromisso_cp = balance_sheet[years[2]]['totalCurrentLiabilities']
+    razao_compromissos = ativos_cp / compromisso_cp
+    pontuacao_compromissos = 1 if razao_compromissos > 1 else 0
+    pontuacao_alavancagem = lp_dividas_pontuacao + pontuacao_compromissos
+
+def pl(empresa):
+    global razao_pl
+    razao_pl = yf.get_quote_table(empresa)['PE Ratio (TTM)']
+    if razao_pl != razao_pl: #ver se NaN
+        razao_pl = 0
+    
+
+def eficiencia_operacional():
+    global pontuacao_eficiencia_operacional
+    #mudanca das margens
+    lucro_bruto = income_statement[years[2]]['grossProfit']
+    receita = income_statement[years[2]]['totalRevenue']
+    lucro_bruto_aa = income_statement[years[3]]['grossProfit']
+    receita_aa = income_statement[years[3]]['totalRevenue']
+    margem_bruta = lucro_bruto / receita
+    margem_bruta_aa = lucro_bruto_aa / receita_aa
+    pontuacao_margem_bruta = 1 if margem_bruta > margem_bruta_aa else 0
+
+    #eficiencia de ativos (conversao)
+    ativos_totais = balance_sheet[years[2]]['totalAssets']
+    ativos_totais_aa = balance_sheet[years[3]]['totalAssets']
+    eficiencia_de_ativos = receita / ativos_totais
+    eficiencia_de_ativos_aa = receita_aa / ativos_totais_aa
+    pontuacao_ef_ativos = 1 if eficiencia_de_ativos > eficiencia_de_ativos_aa else 0
+    pontuacao_eficiencia_operacional = pontuacao_margem_bruta + pontuacao_ef_ativos
+for empresa in lista_de_empresas:
+    try:
+        get_data(empresa)
+        pl(empresa)
+        lucratividade()
+        leverage()
+        eficiencia_operacional()
+        new_row = {'Empresa': empresa,'Razao P/L':razao_pl,'Lucratividade':pontuacao_lucratividade,'Alavancagem': pontuacao_alavancagem, 'Eficiencia Operacional': pontuacao_eficiencia_operacional}
+        summary = summary.append(new_row, ignore_index = True)
+        print(empresa + ' added.')
+    except:
+        print(empresa + ': Algo deu errado')
+    summary['Pontuacao Total'] = summary['Lucratividade'] + summary['Alavancagem'] + summary['Eficiencia Operacional']
+print(summary)
+    
+#opcional para se quiser fazer um grafico com os fehamentos históricos
+#datas = []
+#df1= pd.DataFrame()
+#contador = 0
+#for empresa in lista_de_empresas:
+#    chamada_api= yfi.Ticker(empresa).history(start="2022-09-30", end="2022-10-02")
+#    Close = chamada_api["Close"].values
+#    df1[empresa] = Close
+#    if contador == 0:
+#        contador = 1
+#        datas.append(list(chamada_api['Close'].index))
+#df1['Datas'] = datas [0]
+#df1 = df1.set_index('Datas', drop = True)
+#df1.plot(figsize= (10,7))
+
+
+summary.to_csv('Summary.csv')
